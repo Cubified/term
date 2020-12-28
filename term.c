@@ -31,8 +31,8 @@ int run = 1,
     pty_s,
     x = 0,
     y = 0;
-uint32_t fg = 0xffffffff,
-         bg = 0;
+uint32_t fg = 0xffffff,
+         bg = 0x000000;
 char mod = 0;
 uint64_t *screen_buf;
 
@@ -231,6 +231,7 @@ void term_draw(){
       y_i;
   uint64_t cell;
   char c;
+  uint64_t fore;
 
   XClearWindow(dpy, win);
 
@@ -243,7 +244,7 @@ void term_draw(){
         XSetForeground(
           dpy,
           DefaultGC(dpy, DefaultScreen(dpy)),
-          (cell >> 38) & 0xffffffff
+          (cell >> 38) & 0xffffff
         );
         XFillRectangle(
           dpy,
@@ -252,10 +253,11 @@ void term_draw(){
           (x_i*CHAR_W)+LEFTMOST, y_i*CHAR_H,
           CHAR_W, CHAR_H
         );
+        fore = cell >> 14;
         XSetForeground(
           dpy,
           DefaultGC(dpy, DefaultScreen(dpy)),
-          (cell >> 8) & 0xffffffff
+          (cell >> 14) & 0xffffff
         );
         XDrawString(
           dpy,
@@ -342,11 +344,19 @@ void term_loop(){
               esc_ind = -2;
             }
           } else if(esc_ind == -2){
-            screen_buf[((y*WIDTH)+x)]
-              = (mod << 62) |
-                (bg  << 38) |
-                (fg  << 8) |
-                (pty_c);
+            /* This could be optimized by compressing it into a one-liner
+             *   (which was the case initially), but this would require
+             *   changing mod, fg, and bg to uint64_t, using more memory
+             *   than necessary.  Also, this is (slightly) clearer than
+             *   the one-liner at first glance.
+             */
+            screen_buf[((y*WIDTH)+x)] = mod;
+            screen_buf[((y*WIDTH)+x)] <<= 24;
+            screen_buf[((y*WIDTH)+x)] |= bg;
+            screen_buf[((y*WIDTH)+x)] <<= 24;
+            screen_buf[((y*WIDTH)+x)] |= fg;
+            screen_buf[((y*WIDTH)+x)] <<= 14;
+            screen_buf[((y*WIDTH)+x)] |= pty_c;
             x++;
             if(x >= WIDTH){
               x = 0;
