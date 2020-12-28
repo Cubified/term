@@ -31,10 +31,10 @@ int run = 1,
     pty_s,
     x = 0,
     y = 0;
-uint8_t fg = 255,
-        bg = 0,
-        mod = 0;
-uint32_t *screen_buf;
+uint32_t fg = 0xffffffff,
+         bg = 0;
+char mod = 0;
+uint64_t *screen_buf;
 
 //////////////////////////////
 // STATIC DEFINITIONS
@@ -168,7 +168,7 @@ int term_init(){
   log_info(TERM_LOG_STARTUP);
 
   /* Screen buffer */
-  screen_buf = calloc(WIDTH*HEIGHT, sizeof(uint32_t));
+  screen_buf = calloc(WIDTH*HEIGHT, sizeof(uint64_t));
 
   /* X */
   dpy = XOpenDisplay(NULL);
@@ -176,7 +176,7 @@ int term_init(){
     log_error(TERM_ERR_DISPLAY);
   }
 
-  attrs.background_pixel = WhitePixel(dpy, DefaultScreen(dpy));
+  attrs.background_pixel = BlackPixel(dpy, DefaultScreen(dpy));
   attrs.event_mask
     = SubstructureNotifyMask |
       ExposureMask |
@@ -229,7 +229,7 @@ int term_init(){
 void term_draw(){
   int x_i,
       y_i;
-  uint32_t cell;
+  uint64_t cell;
   char c;
 
   XClearWindow(dpy, win);
@@ -243,12 +243,19 @@ void term_draw(){
         XSetForeground(
           dpy,
           DefaultGC(dpy, DefaultScreen(dpy)),
-          (cell >> 16) & 0xff
+          (cell >> 38) & 0xffffffff
         );
-        XSetBackground(
+        XFillRectangle(
+          dpy,
+          win,
+          DefaultGC(dpy, DefaultScreen(dpy)),
+          (x_i*CHAR_W)+LEFTMOST, y_i*CHAR_H,
+          CHAR_W, CHAR_H
+        );
+        XSetForeground(
           dpy,
           DefaultGC(dpy, DefaultScreen(dpy)),
-          (cell >> 8) & 0xff
+          (cell >> 8) & 0xffffffff
         );
         XDrawString(
           dpy,
@@ -265,7 +272,7 @@ void term_draw(){
   XSetForeground(
     dpy,
     DefaultGC(dpy, DefaultScreen(dpy)),
-    0
+    0xffffffff
   );
   XFillRectangle(
     dpy,
@@ -308,7 +315,6 @@ void term_loop(){
     if(FD_ISSET(pty_m, &set)){
       if(read(pty_m, &pty_c, 1) <= 0){ return; }
 
-      printf("%i\n", pty_c);
       switch(pty_c){
         case '\a':
           /* TODO */
@@ -337,9 +343,9 @@ void term_loop(){
             }
           } else if(esc_ind == -2){
             screen_buf[((y*WIDTH)+x)]
-              = (mod << 24) |
-                (fg  << 16) |
-                (bg  << 8)  |
+              = (mod << 62) |
+                (bg  << 38) |
+                (fg  << 8) |
                 (pty_c);
             x++;
             if(x >= WIDTH){
