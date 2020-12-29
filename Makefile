@@ -4,7 +4,7 @@ CC=gcc
 
 LIBS=-lX11
 CFLAGS=-Os -pipe -s -pedantic
-DEBUGCFLAGS=-Og -pipe -g
+DEBUGCFLAGS=-Og -pipe -g -Wall
 
 INPUT=term.c
 OUTPUT=term

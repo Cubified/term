@@ -15,4 +15,7 @@
 #define TOPMOST  10
 #define LEFTMOST 2
 
+#define FG_DEFAULT 0xffffff
+#define BG_DEFAULT 0x000000
+
 #endif

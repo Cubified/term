@@ -149,7 +149,7 @@ int esc_parse(char *str){
     }
   }
 
-  ESC_EXEC(function, args, arg_no);
+  ESC_EXEC(function, args, arg_no, str);
 
   return ESC_SUCCESS;
 }

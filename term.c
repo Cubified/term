@@ -2,10 +2,8 @@
  * term.c: a tiny terminal emulator
  *
  * TODO:
- *  - Store plain text and escape sequences
- *      in some way which is both easily-
- *      differentiable as well as easy to
- *      modify one using the other
+ *  - Implement more complete escape
+ *      code handling
  */
 
 #include <stdio.h>
@@ -30,9 +28,11 @@ int run = 1,
     pty_m,
     pty_s,
     x = 0,
-    y = 0;
-uint32_t fg = 0xffffff,
-         bg = 0x000000;
+    y = 0,
+    x_prev = 0,
+    y_prev = 0;
+uint32_t fg = FG_DEFAULT,
+         bg = BG_DEFAULT;
 char mod = 0;
 uint64_t *screen_buf;
 
@@ -41,7 +41,7 @@ uint64_t *screen_buf;
 //
 // TODO: More
 //
-static void term_esc(char func, int args[2], int num);
+static void term_esc(char func, int args[2], int num, char *str);
 static void term_draw();
 
 //////////////////////////////
@@ -50,18 +50,27 @@ static void term_draw();
 #define ESC_EXEC term_esc
 #include "esc.h"
 
-void term_esc(char func, int args[3], int num){
+void term_esc(char func, int args[3], int num, char *str){
   int i;
 
   switch(func){
     case ESC_FUNC_GRAPHICS:
-      fg = args[0];
-      bg = args[1];
+      fg = (num >= 1 ? args[0] : FG_DEFAULT);
+      bg = (num >= 2 ? args[1] : BG_DEFAULT);
       break;
+    case ESC_FUNC_GRAPHICS_MODE:
+    case ESC_FUNC_GRAPHICS_MODE_RESET:
+      if(args[0] == ESC_QUESTION){
+        if(args[1] == 25){
+          /* Show/hide cursor here */
+        }
+      }
+      break;
+
     case ESC_FUNC_CURSOR_POS:
     case ESC_FUNC_CURSOR_POS_ALT:
-      x = args[0];
-      y = args[1];
+      x = (num >= 1 ? args[0] : 0);
+      y = (num >= 2 ? args[1] : 0);
       break;
     case ESC_FUNC_CURSOR_UP:
       y -= args[0];
@@ -86,9 +95,20 @@ void term_esc(char func, int args[3], int num){
     case ESC_FUNC_CURSOR_COL:
       x = args[0];
       break;
+
+    case ESC_FUNC_ERASE_SCREEN:
+      x_prev = 0;
+      y_prev = 0;
+      XClearWindow(dpy, win);
+      break;
   }
 
-  printf("Escape sequence:\n Function: %i\n", func);
+  if(x < 0) { x = 0; }
+  if(x > WIDTH) { x = WIDTH; }
+  if(y < 0) { y = 0; }
+  if(y > HEIGHT) { y = HEIGHT; }
+
+  printf("Escape sequence:\n String: %s\n Function: %i\n", str, func);
   for(i=0;i<num;i++){
     printf(" Args[%i]: %i\n", i, args[i]);
   }
@@ -161,7 +181,7 @@ void log_error(int status){
 //////////////////////////////
 // TERM CORE
 //
-int term_init(){
+void term_init(){
   XSetWindowAttributes attrs;
   struct winsize ws;
 
@@ -227,54 +247,52 @@ int term_init(){
 }
 
 void term_draw(){
-  int x_i,
-      y_i;
   uint64_t cell;
   char c;
-  uint64_t fore;
 
-  XClearWindow(dpy, win);
+  /* Print last character read from pty */
+  cell = screen_buf[(y_prev*WIDTH)+x_prev];
+  c = cell & 0xff; /* TODO: wchar/unicode support */
 
-  for(y_i=0;y_i<HEIGHT;y_i++){
-    for(x_i=0;x_i<WIDTH;x_i++){
-      cell = screen_buf[(y_i*WIDTH)+x_i];
-      c = cell & 0xff;
-
-      if(c != 0){
-        XSetForeground(
-          dpy,
-          DefaultGC(dpy, DefaultScreen(dpy)),
-          (cell >> 38) & 0xffffff
-        );
-        XFillRectangle(
-          dpy,
-          win,
-          DefaultGC(dpy, DefaultScreen(dpy)),
-          (x_i*CHAR_W)+LEFTMOST, y_i*CHAR_H,
-          CHAR_W, CHAR_H
-        );
-        fore = cell >> 14;
-        XSetForeground(
-          dpy,
-          DefaultGC(dpy, DefaultScreen(dpy)),
-          (cell >> 14) & 0xffffff
-        );
-        XDrawString(
-          dpy,
-          win,
-          DefaultGC(dpy, DefaultScreen(dpy)),
-          (x_i*CHAR_W)+LEFTMOST, (y_i*CHAR_H)+TOPMOST,
-          &c,
-          1
-        );
-      }
-    }
+  if(c != 0){
+    XSetForeground(
+      dpy,
+      DefaultGC(dpy, DefaultScreen(dpy)),
+      (cell >> 38) & 0xffffff
+    );
+    XFillRectangle(
+      dpy,
+      win,
+      DefaultGC(dpy, DefaultScreen(dpy)),
+      (x_prev*CHAR_W)+LEFTMOST, y_prev*CHAR_H,
+      CHAR_W, CHAR_H
+    );
+    XSetForeground(
+      dpy,
+      DefaultGC(dpy, DefaultScreen(dpy)),
+      (cell >> 14) & 0xffffff
+    );
+    XDrawString(
+      dpy,
+      win,
+      DefaultGC(dpy, DefaultScreen(dpy)),
+      (x_prev*CHAR_W)+LEFTMOST, (y_prev*CHAR_H)+TOPMOST,
+      &c,
+      1
+    );
   }
 
+  /* Print cursor, changing character's color if necessary */
+  cell = screen_buf[(y*WIDTH)+x];
+  c = cell & 0xff; /* TODO: wchar/unicode support */
+  if(c == 0) { c = ' '; }
+
+  /* TODO: This is broken */
+  /*
   XSetForeground(
     dpy,
     DefaultGC(dpy, DefaultScreen(dpy)),
-    0xffffffff
+    fg
   );
   XFillRectangle(
     dpy,
@@ -283,6 +301,20 @@ void term_draw(){
     (x*CHAR_W)+LEFTMOST, y*CHAR_H,
     CHAR_W, CHAR_H
   );
+  XSetForeground(
+    dpy,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    bg
+  );
+  XDrawString(
+    dpy,
+    win,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    (x*CHAR_W)+LEFTMOST, (y*CHAR_H)+TOPMOST,
+    &c,
+    1
+  );
+  */
 
   XFlush(dpy);
   return;
@@ -357,6 +389,10 @@ void term_loop(){
             screen_buf[((y*WIDTH)+x)] |= fg;
             screen_buf[((y*WIDTH)+x)] <<= 14;
             screen_buf[((y*WIDTH)+x)] |= pty_c;
+            
+            x_prev = x;
+            y_prev = y;
+
             x++;
             if(x >= WIDTH){
               x = 0;
