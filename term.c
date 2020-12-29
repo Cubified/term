@@ -54,23 +54,10 @@ void term_esc(char func, int args[3], int num, char *str){
   int i;
 
   switch(func){
-    case ESC_FUNC_GRAPHICS:
-      fg = (num >= 1 ? args[0] : FG_DEFAULT);
-      bg = (num >= 2 ? args[1] : BG_DEFAULT);
-      break;
-    case ESC_FUNC_GRAPHICS_MODE:
-    case ESC_FUNC_GRAPHICS_MODE_RESET:
-      if(args[0] == ESC_QUESTION){
-        if(args[1] == 25){
-          /* Show/hide cursor here */
-        }
-      }
-      break;
-
     case ESC_FUNC_CURSOR_POS:
     case ESC_FUNC_CURSOR_POS_ALT:
-      x = (num >= 1 ? args[0] : 0);
-      y = (num >= 2 ? args[1] : 0);
+      y = (num >= 1 ? args[0] : 0);
+      x = (num >= 2 ? args[1] : 0);
       break;
     case ESC_FUNC_CURSOR_UP:
       y -= args[0];
@@ -100,6 +87,30 @@ void term_esc(char func, int args[3], int num, char *str){
       x_prev = 0;
       y_prev = 0;
       XClearWindow(dpy, win);
+      break;
+    case ESC_FUNC_ERASE_LINE:
+      XClearArea(
+        dpy,
+        win,
+        (x*CHAR_W)+LEFTMOST, y*CHAR_H,
+        WIDTH*CHAR_W, CHAR_H,
+        False
+      );
+      break;
+
+    case ESC_FUNC_GRAPHICS:
+      /* TODO: This will be quite complicated */
+
+      fg = (num >= 1 ? args[0] : FG_DEFAULT);
+      bg = (num >= 2 ? args[1] : BG_DEFAULT);
+      break;
+    case ESC_FUNC_GRAPHICS_MODE:
+    case ESC_FUNC_GRAPHICS_MODE_RESET:
+      if(args[0] == ESC_QUESTION){
+        if(args[1] == 25){
+          /* Show/hide cursor here */
+        }
+      }
       break;
   }
 
