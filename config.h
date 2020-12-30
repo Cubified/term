@@ -18,4 +18,31 @@
 #define FG_DEFAULT 0xffffff
 #define BG_DEFAULT 0x000000
 
+/* TODO */
+const int esc_palette_8[] = {
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+};
+
+const int esc_palette_8_bright[] = {
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+};
+
+const int esc_palette_256[] = {
+  0, 1, 2, 3
+};
+
 #endif

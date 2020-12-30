@@ -41,7 +41,7 @@ uint64_t *screen_buf;
 //
 // TODO: More
 //
-static void term_esc(char func, int args[2], int num, char *str);
+static void term_esc(char func, int args[256], int num, char *str);
 static void term_draw();
 
 //////////////////////////////
@@ -50,7 +50,7 @@ static void term_draw();
 #define ESC_EXEC term_esc
 #include "esc.h"
 
-void term_esc(char func, int args[3], int num, char *str){
+void term_esc(char func, int args[ESC_MAX], int num, char *str){
   int i;
 
   switch(func){
@@ -99,10 +99,34 @@ void term_esc(char func, int args[3], int num, char *str){
       break;
 
     case ESC_FUNC_GRAPHICS:
-      /* TODO: This will be quite complicated */
-
-      fg = (num >= 1 ? args[0] : FG_DEFAULT);
-      bg = (num >= 2 ? args[1] : BG_DEFAULT);
+      switch(args[0]){
+        case ESC_GFX_NOCHANGE:
+          break;
+        case ESC_GFX_RESET:
+          fg = FG_DEFAULT;
+          break;
+        default:
+          fg = args[0];
+          break;
+      }
+      switch(args[1]){
+        case ESC_GFX_NOCHANGE:
+          break;
+        case ESC_GFX_RESET:
+          bg = BG_DEFAULT;
+          break;
+        default:
+          bg = args[1];
+          break;
+      }
+      switch(args[2]){
+        case ESC_GFX_RESET:
+          mod = 0;
+          break;
+        default:
+          mod |= args[2];
+          break;
+      }
       break;
     case ESC_FUNC_GRAPHICS_MODE:
     case ESC_FUNC_GRAPHICS_MODE_RESET:
