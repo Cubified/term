@@ -4,6 +4,8 @@
 
 #include <stdio.h>
 
+#include "../config.h"
+
 static void esc_handler(char func, int args[5], int num, char *str);
 
 #define ESC_EXEC esc_handler

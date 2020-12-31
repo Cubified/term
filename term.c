@@ -31,7 +31,9 @@ int run = 1,
     x = 0,
     y = 0,
     x_prev = 0,
-    y_prev = 0;
+    y_prev = 0,
+    WIDTH = 1, /* TODO: Remove uppercase to avoid confusion */
+    HEIGHT = 1;
 uint32_t fg = FG_DEFAULT,
          bg = BG_DEFAULT;
 char mod = 0;
@@ -44,6 +46,7 @@ uint64_t *screen_buf;
 //
 static void term_esc(char func, int args[256], int num, char *str);
 static void term_draw();
+static void term_redraw_line();
 static void term_redraw();
 
 //////////////////////////////
@@ -244,7 +247,7 @@ void term_init(){
     log_error(TERM_ERR_DISPLAY);
   }
 
-  attrs.background_pixel = BlackPixel(dpy, DefaultScreen(dpy));
+  attrs.background_pixel = BG_DEFAULT;
   attrs.event_mask
     = SubstructureNotifyMask |
       StructureNotifyMask |
@@ -344,21 +347,6 @@ void term_draw(){
   c = cell & 0xff; /* TODO: wchar/unicode support */
   if(c == 0) { c = ' '; }
 
-  /* TODO: This is still broken */
-
-  XSetForeground(
-    dpy,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    fg
-  );
-  XFillRectangle(
-    dpy,
-    win,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    (x*CHAR_W)+LEFTMOST, y*CHAR_H,
-    2, CHAR_H
-  );
-
   /*
   XSetForeground(
     dpy,
@@ -391,21 +379,58 @@ void term_draw(){
   return;
 }
 
+/* TODO: This is still broken */
+void term_draw_cursor(){
+  XSetForeground(
+    dpy,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    fg
+  );
+  XFillRectangle(
+    dpy,
+    win,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    (x*CHAR_W)+LEFTMOST, y*CHAR_H,
+    2, CHAR_H
+  );
+}
+
+void term_redraw_line(){
+  int x_i;
+
+  for(x_i=0;x_i<WIDTH;x_i++){
+    x_prev = x_i;
+    term_draw();
+  }
+
+  term_draw_cursor();
+}
+
 void term_redraw(){
-  int x_i, y_i,
+  int y_i,
       x_o = x_prev,
       y_o = y_prev;
 
   for(y_i=0;y_i<HEIGHT;y_i++){
-    for(x_i=0;x_i<WIDTH;x_i++){
-      x_prev = x_i;
-      y_prev = y_i;
-      term_draw();
-    }
+    y_prev = y_i;
+    term_redraw_line();
   }
 
   x_prev = x_o;
   y_prev = y_o;
+}
+
+void term_resize(){
+  struct winsize ws;
+
+  /* TODO: This is wrong, but works well enough */
+  screen_buf = realloc(screen_buf, WIDTH*HEIGHT*sizeof(uint64_t));
+
+  ws.ws_col = WIDTH;
+  ws.ws_row = HEIGHT;
+  ioctl(pty_m, TIOCSWINSZ, &ws);
+
+  term_redraw();
 }
 
 void term_key(XKeyEvent key){
@@ -468,6 +493,7 @@ void term_loop(){
             y--;
           }
           screen_buf[(y*WIDTH)+x] = 0;
+          term_redraw_line();
           break;
         case '\r':
           x = 0;
@@ -530,7 +556,9 @@ void term_loop(){
             term_key(evt.xkey);
             break;
           case ConfigureNotify:
-            term_redraw();
+            WIDTH = (evt.xconfigure.width / CHAR_W);
+            HEIGHT = (evt.xconfigure.height / CHAR_H) - 1; /* TODO: More robust solution using TOPMOST and CHAR_H */
+            term_resize();
             break;
         }
       }

@@ -1,7 +1,11 @@
 /*
- * esc.h: a portable escape code parser
+ * esc.h: a reasonably portable escape code parser
  *
- * Example usage:
+ * Example usage (refer to config.h for color palette definitions):
+ *
+ *  const int esc_palette_8[]        = { ... };
+ *  const int esc_palette_8_bright[] = { ... };
+ *  const int esc_palette_256[]      = { ... };
  *
  *  static void my_escape_handler(char func, int args[ESC_MAX], int num, char *str);
  *
