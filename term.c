@@ -1,9 +1,10 @@
 /*
  * term.c: a tiny terminal emulator
  *
- * TODO:
- *  - Implement more complete escape
- *      code handling
+ * Specific TODO list:
+ *  - Fix character duplication on mid-word
+ *      backspace
+ *  - Fix cursor rendering
  */
 
 #include <stdio.h>
@@ -43,6 +44,7 @@ uint64_t *screen_buf;
 //
 static void term_esc(char func, int args[256], int num, char *str);
 static void term_draw();
+static void term_redraw();
 
 //////////////////////////////
 // ESCAPE CODE PARSING
@@ -60,26 +62,33 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
       x = (num >= 2 ? args[1] : 0);
       break;
     case ESC_FUNC_CURSOR_UP:
-      y -= args[0];
+      y_prev = y;
+      y -= (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_DOWN:
-      y += args[0];
+      y_prev = y;
+      y += (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_RIGHT:
-      x += args[0];
+      x_prev = x;
+      x += (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_LEFT:
-      x -= args[0];
+      x_prev = x;
+      x -= (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_LINE_NEXT:
+      y_prev = y;
       x = 0;
-      y += args[0];
+      y += (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_LINE_PREV:
+      y_prev = y;
       x = 0;
-      y -= args[0];
+      y -= (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_COL:
+      x_prev = x;
       x = args[0];
       break;
 
@@ -135,6 +144,10 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
           /* Show/hide cursor here */
         }
       }
+      break;
+
+    case ESC_FUNC_DELETE:
+      /* TODO */
       break;
   }
 
@@ -234,6 +247,7 @@ void term_init(){
   attrs.background_pixel = BlackPixel(dpy, DefaultScreen(dpy));
   attrs.event_mask
     = SubstructureNotifyMask |
+      StructureNotifyMask |
       ExposureMask |
       KeyPressMask |
       ButtonPressMask;
@@ -289,6 +303,14 @@ void term_draw(){
   cell = screen_buf[(y_prev*WIDTH)+x_prev];
   c = cell & 0xff; /* TODO: wchar/unicode support */
 
+  XClearArea(
+    dpy,
+    win,
+    (x_prev*CHAR_W)+LEFTMOST, y_prev*CHAR_H,
+    2, CHAR_H,
+    False
+  );
+
   if(c != 0){
     XSetForeground(
       dpy,
@@ -322,7 +344,21 @@ void term_draw(){
   c = cell & 0xff; /* TODO: wchar/unicode support */
   if(c == 0) { c = ' '; }
 
-  /* TODO: This is broken */
+  /* TODO: This is still broken */
+
+  XSetForeground(
+    dpy,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    fg
+  );
+  XFillRectangle(
+    dpy,
+    win,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    (x*CHAR_W)+LEFTMOST, y*CHAR_H,
+    2, CHAR_H
+  );
+
   /*
   XSetForeground(
     dpy,
@@ -355,13 +391,46 @@ void term_draw(){
   return;
 }
 
+void term_redraw(){
+  int x_i, y_i,
+      x_o = x_prev,
+      y_o = y_prev;
+
+  for(y_i=0;y_i<HEIGHT;y_i++){
+    for(x_i=0;x_i<WIDTH;x_i++){
+      x_prev = x_i;
+      y_prev = y_i;
+      term_draw();
+    }
+  }
+
+  x_prev = x_o;
+  y_prev = y_o;
+}
+
 void term_key(XKeyEvent key){
   char buf[32];
   int i, num;
   KeySym ksym;
 
   num = XLookupString(&key, buf, sizeof(buf), &ksym, 0);
-  for(i = 0; i < num; i++){ write(pty_m, &buf[i], 1); }
+  switch(ksym){
+    case XK_Left:
+      write(pty_m, "\x1b[D", 3);
+      break;
+    case XK_Right:
+      write(pty_m, "\x1b[C", 3);
+      break;
+    case XK_Up:
+      write(pty_m, "\x1b[A", 3);
+      break;
+    case XK_Down:
+      write(pty_m, "\x1b[B", 3);
+      break;
+    default:
+      for(i = 0; i < num; i++){ write(pty_m, &buf[i], 1); }
+      break;
+    }
 }
 
 void term_loop(){
@@ -386,13 +455,19 @@ void term_loop(){
 
       switch(pty_c){
         case '\a':
-          /* TODO */
+          printf("Bell\n");
           break;
         case '\x1b':
           esc_ind = -1;
           break;
         case '\b':
-          /* TODO */
+          /* TODO: This fix for wrapping is broken */
+          x--;
+          if(x < 0){
+            x = WIDTH-1;
+            y--;
+          }
+          screen_buf[(y*WIDTH)+x] = 0;
           break;
         case '\r':
           x = 0;
@@ -453,6 +528,9 @@ void term_loop(){
             break;
           case KeyPress:
             term_key(evt.xkey);
+            break;
+          case ConfigureNotify:
+            term_redraw();
             break;
         }
       }

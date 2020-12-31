@@ -1,6 +1,6 @@
 ## term
 
-A tiny terminal emulator.  Currently a work in progress, but semi-functional -- including basic support for escape sequences.
+A tiny terminal emulator.  Currently a work in progress, but semi-functional -- includes basic support for escape sequences.
 
 ### To-Do
 - Support Unicode/non-ANSI characters

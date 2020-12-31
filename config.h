@@ -27,7 +27,7 @@ const int esc_palette_8[] = {
   0x000099, /* Blue    */
   0x990099, /* Magenta */
   0x009999, /* Cyan    */
-  0xffffff  /* White/default (may not be necessary) */
+  0xffffff  /* White   */
 };
 
 const int esc_palette_8_bright[] = {
@@ -38,7 +38,7 @@ const int esc_palette_8_bright[] = {
   0x0000ff, /* Blue    */
   0xff00ff, /* Magenta */
   0x00ffff, /* Cyan    */
-  0xffffff  /* White/default (is necessary) */
+  0xffffff  /* White   */
 };
 
 /* TODO */
