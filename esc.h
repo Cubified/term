@@ -275,7 +275,9 @@ void esc_parse_gfx(char func, int args[ESC_MAX], int num, char *str){
           out[affect_prop] <<= 8;
         }
         expect_args--;
-      } else {
+      }
+
+      if(expect_args == 0){
         accept_cmds = 1;
       }
     }
