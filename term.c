@@ -2,9 +2,8 @@
  * term.c: a tiny terminal emulator
  *
  * Specific TODO list:
- *  - Fix character duplication on mid-word
- *      backspace
  *  - Fix cursor rendering
+ *  - Add scrollback
  */
 
 #include <stdio.h>
@@ -22,6 +21,41 @@
 #include "config.h"
 
 //////////////////////////////
+// PREPROCESSOR
+//
+#define UTF_SIZE 4
+#define LENGTH(x) (sizeof(x)/sizeof(x[0]))
+
+//////////////////////////////
+// ENUMS AND TYPEDEFS
+//
+enum term_status_codes {
+  /* Succes/log codes */
+  TERM_SUCCESS
+    = 0,
+  TERM_LOG_STARTUP
+    = -1,
+  TERM_LOG_SHUTDOWN
+    = -2,
+
+  /* Warning codes */
+  TERM_WARN_ESC
+    = -100,
+
+  /* Error codes */
+  TERM_ERR_DISPLAY
+    = 1,
+  TERM_ERR_PTY
+    = 2,
+  TERM_ERR_TTY
+    = 3,
+  X_FONT_SET
+    = 4
+};
+
+typedef __uint128_t uint128_t;
+
+//////////////////////////////
 // GLOBAL VARIABLES
 //
 Display *dpy;
@@ -34,12 +68,16 @@ int run = 1,
     y = 0,
     x_prev = 0,
     y_prev = 0,
-    WIDTH = 1, /* TODO: Remove uppercase to avoid confusion */
-    HEIGHT = 1;
+    term_width = 100,
+    term_height = 100,
+    esc_ind = -2;
 uint32_t fg = FG_DEFAULT,
          bg = BG_DEFAULT;
 char mod = 0;
-uint64_t *screen_buf;
+char esc_seq[256];
+uint128_t *screen_buf;
+unsigned char utf_byte[UTF_SIZE + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
+unsigned char utf_mask[UTF_SIZE + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
 
 //////////////////////////////
 // STATIC DEFINITIONS
@@ -107,7 +145,7 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
         dpy,
         win,
         (x*CHAR_W)+LEFTMOST, y*CHAR_H,
-        WIDTH*CHAR_W, CHAR_H,
+        term_width*CHAR_W, CHAR_H,
         False
       );
       break;
@@ -159,42 +197,15 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
   }
 
   if(x < 0) { x = 0; }
-  if(x > WIDTH) { x = WIDTH; }
+  if(x > term_width) { x = term_width; }
   if(y < 0) { y = 0; }
-  if(y > HEIGHT) { y = HEIGHT; }
+  if(y > term_height) { y = term_height; }
 
   printf("Escape sequence:\n String: %s\n Function: %i\n", str, func);
   for(i=0;i<num;i++){
     printf(" Args[%i]: %i\n", i, args[i]);
   }
 }
-
-//////////////////////////////
-// ENUMS AND TYPEDEFS
-//
-enum term_status_codes {
-  /* Succes/log codes */
-  TERM_SUCCESS
-    = 0,
-  TERM_LOG_STARTUP
-    = -1,
-  TERM_LOG_SHUTDOWN
-    = -2,
-
-  /* Warning codes */
-  TERM_WARN_ESC
-    = -100,
-
-  /* Error codes */
-  TERM_ERR_DISPLAY
-    = 1,
-  TERM_ERR_PTY
-    = 2,
-  TERM_ERR_TTY
-    = 3,
-  X_FONT_SET
-    = 4
-};
 
 //////////////////////////////
 // LOG FUNCTIONS
@@ -251,7 +262,7 @@ void term_init(){
   log_info(TERM_LOG_STARTUP);
 
   /* Screen buffer */
-  screen_buf = calloc(WIDTH*HEIGHT, sizeof(uint64_t));
+  screen_buf = calloc(term_width*term_height, sizeof(uint128_t));
 
   /* Locale */
   setlocale(LC_ALL, "");
@@ -274,7 +285,7 @@ void term_init(){
     dpy,
     DefaultRootWindow(dpy),
     0, 0,
-    WIDTH, HEIGHT,
+    term_width, term_height,
     0,
     DefaultDepth(dpy, DefaultScreen(dpy)),
     InputOutput,
@@ -287,7 +298,7 @@ void term_init(){
 
   fnt = XCreateFontSet(
     dpy,
-    "-*-*-*-*-*-*-*-*-*-*-*-*-*-*",
+    FONT_STRING,
     &missing_list,
     &missing_count,
     &def_string
@@ -303,8 +314,8 @@ void term_init(){
     log_error(TERM_ERR_PTY);
   }
 
-  ws.ws_col = WIDTH;
-  ws.ws_row = HEIGHT;
+  ws.ws_col = term_width;
+  ws.ws_row = term_height;
   ioctl(pty_m, TIOCSWINSZ, &ws);
 
   if(fork() == 0){
@@ -326,12 +337,12 @@ void term_init(){
 }
 
 void term_draw(){
-  uint64_t cell;
+  uint128_t cell;
   wchar_t c;
 
   /* Print last character read from pty */
-  cell = screen_buf[(y_prev*WIDTH)+x_prev];
-  c = cell & 0x3fff; /* TODO: wchar/unicode support */
+  cell = screen_buf[(y_prev*term_width)+x_prev];
+  c = cell & 0xffffffff;
 
   XClearArea(
     dpy,
@@ -345,7 +356,7 @@ void term_draw(){
     XSetForeground(
       dpy,
       DefaultGC(dpy, DefaultScreen(dpy)),
-      (cell >> 38) & 0xffffff
+      (cell >> 56) & 0xffffff
     );
     XFillRectangle(
       dpy,
@@ -357,7 +368,7 @@ void term_draw(){
     XSetForeground(
       dpy,
       DefaultGC(dpy, DefaultScreen(dpy)),
-      (cell >> 14) & 0xffffff
+      (cell >> 32) & 0xffffff
     );
     XwcDrawString(
       dpy,
@@ -369,39 +380,6 @@ void term_draw(){
       1
     );
   }
-
-  /* Print cursor, changing character's color if necessary */
-  cell = screen_buf[(y*WIDTH)+x];
-  c = cell & 0xff; /* TODO: wchar/unicode support */
-  if(c == 0) { c = ' '; }
-
-  /*
-  XSetForeground(
-    dpy,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    fg
-  );
-  XFillRectangle(
-    dpy,
-    win,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    (x*CHAR_W)+LEFTMOST, y*CHAR_H,
-    CHAR_W, CHAR_H
-  );
-  XSetForeground(
-    dpy,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    bg
-  );
-  XDrawString(
-    dpy,
-    win,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    (x*CHAR_W)+LEFTMOST, (y*CHAR_H)+TOPMOST,
-    &c,
-    1
-  );
-  */
 
   XFlush(dpy);
   return;
@@ -426,7 +404,7 @@ void term_draw_cursor(){
 void term_redraw_line(){
   int x_i;
 
-  for(x_i=0;x_i<WIDTH;x_i++){
+  for(x_i=0;x_i<term_width;x_i++){
     x_prev = x_i;
     term_draw();
   }
@@ -439,7 +417,7 @@ void term_redraw(){
       x_o = x_prev,
       y_o = y_prev;
 
-  for(y_i=0;y_i<HEIGHT;y_i++){
+  for(y_i=0;y_i<term_height;y_i++){
     y_prev = y_i;
     term_redraw_line();
   }
@@ -451,11 +429,10 @@ void term_redraw(){
 void term_resize(){
   struct winsize ws;
 
-  /* TODO: This is wrong, but works well enough */
-  screen_buf = realloc(screen_buf, WIDTH*HEIGHT*sizeof(uint64_t));
+  screen_buf = realloc(screen_buf, term_width*term_height*sizeof(uint128_t));
 
-  ws.ws_col = WIDTH;
-  ws.ws_row = HEIGHT;
+  ws.ws_col = term_width;
+  ws.ws_row = term_height;
   ioctl(pty_m, TIOCSWINSZ, &ws);
 
   term_redraw();
@@ -486,13 +463,126 @@ void term_key(XKeyEvent key){
     }
 }
 
+/* Begin black box utf8 decoder from st */
+wchar_t term_decode_byte(char c, int *charsize){
+  for(*charsize=0;*charsize<(int)LENGTH(utf_mask);(*charsize)++){
+    if((c & utf_mask[*charsize]) == utf_byte[*charsize]){
+      return (c & ~utf_mask[*charsize]);
+    }
+  }
+
+  return 0;
+}
+
+wchar_t term_decode(char *c, int len, int *charsize){
+  int i, j, type;
+  wchar_t out = term_decode_byte(c[0], charsize);
+
+  if(*charsize >= 1 && *charsize <= UTF_SIZE) { return out; }
+
+  for(i=1, j=1; i < len && j < *charsize; i++, j++){
+    out = (out << 6) | term_decode_byte(c[i], &type);
+    if(type != 0){
+      *charsize = j;
+      return out;
+    }
+  }
+
+  if(j < *charsize){
+    *charsize = 0;
+    return 0;
+  }
+
+  return out;
+}
+/* End black box utf8 decoder from st */
+
+void term_putchar(wchar_t wc){
+  switch(wc){
+    case '\a':
+      printf("Bell\n");
+      break;
+    case '\x1b':
+      esc_ind = -1;
+      break;
+    case '\b':
+      x--;
+      if(x < 0){
+        x = term_width-1;
+        y--;
+      }
+      screen_buf[(y*term_width)+x] = 0;
+      term_redraw_line();
+      break;
+    case '\r':
+      x = 0;
+      break;
+    case '\n':
+      y++;
+      break;
+    case '\t':
+      x += TABWIDTH - (x % TABWIDTH);
+      break;
+    default:
+      if(esc_ind >= 0){
+        esc_seq[esc_ind++] = wc;
+        if(ESC_IS_FUNCTION(wc)){
+          esc_seq[esc_ind] = '\0';
+          if(esc_parse(esc_seq) != ESC_SUCCESS){
+            log_warn(TERM_WARN_ESC, esc_seq);
+          }
+          esc_ind = -2;
+        }
+      } else if(esc_ind == -2){
+        /* This could be optimized by compressing it into a one-liner
+         *   (which was the case initially), but this would require
+         *   changing mod, fg, and bg to uint128_t, using more memory
+         *   than necessary.  Also, this is (slightly) clearer than
+         *   the one-liner at first glance.
+         */
+        screen_buf[((y*term_width)+x)] = mod;
+        screen_buf[((y*term_width)+x)] <<= 24;
+        screen_buf[((y*term_width)+x)] |= bg;
+        screen_buf[((y*term_width)+x)] <<= 24;
+        screen_buf[((y*term_width)+x)] |= fg;
+        screen_buf[((y*term_width)+x)] <<= 32;
+        screen_buf[((y*term_width)+x)] |= wc;
+        
+        x_prev = x;
+        y_prev = y;
+
+        x++;
+        if(x >= term_width){
+          x = 0;
+          y++;
+        }
+      } else {
+        esc_ind++;
+      }
+      break;
+  }
+
+  term_draw();
+}
+
+void term_write(char *buf, int len){
+  int n,
+      inc = 1;
+  wchar_t wc;
+
+  for(n=0;n<len;n+=inc){
+    wc = term_decode(buf+n, len-n, &inc);
+
+    term_putchar(wc);
+  }
+}
+
 void term_loop(){
   XEvent evt;
   fd_set set;
   int maxfd,
-      esc_ind = -2;
-  char pty_c;
-  char esc_seq[ESC_MAX];
+      pty_len;
+  char pty_buf[ESC_MAX];
 
   maxfd = (pty_m > ConnectionNumber(dpy) ? pty_m : ConnectionNumber(dpy));
 
@@ -504,74 +594,9 @@ void term_loop(){
     select(maxfd+1, &set, NULL, NULL, NULL);
 
     if(FD_ISSET(pty_m, &set)){
-      if(read(pty_m, &pty_c, 1) <= 0){ return; }
+      if((pty_len=read(pty_m, pty_buf, ESC_MAX)) <= 0){ return; }
 
-      switch(pty_c){
-        case '\a':
-          printf("Bell\n");
-          break;
-        case '\x1b':
-          esc_ind = -1;
-          break;
-        case '\b':
-          /* TODO: This fix for wrapping is broken */
-          x--;
-          if(x < 0){
-            x = WIDTH-1;
-            y--;
-          }
-          screen_buf[(y*WIDTH)+x] = 0;
-          term_redraw_line();
-          break;
-        case '\r':
-          x = 0;
-          break;
-        case '\n':
-          y++;
-          break;
-        case '\t':
-          x += TABWIDTH - (x % TABWIDTH);
-          break;
-        default:
-          if(esc_ind >= 0){
-            esc_seq[esc_ind++] = pty_c;
-            if(ESC_IS_FUNCTION(pty_c)){
-              esc_seq[esc_ind] = '\0';
-              if(esc_parse(esc_seq) != ESC_SUCCESS){
-                log_warn(TERM_WARN_ESC, esc_seq);
-              }
-              esc_ind = -2;
-            }
-          } else if(esc_ind == -2){
-            /* This could be optimized by compressing it into a one-liner
-             *   (which was the case initially), but this would require
-             *   changing mod, fg, and bg to uint64_t, using more memory
-             *   than necessary.  Also, this is (slightly) clearer than
-             *   the one-liner at first glance.
-             */
-            screen_buf[((y*WIDTH)+x)] = mod;
-            screen_buf[((y*WIDTH)+x)] <<= 24;
-            screen_buf[((y*WIDTH)+x)] |= bg;
-            screen_buf[((y*WIDTH)+x)] <<= 24;
-            screen_buf[((y*WIDTH)+x)] |= fg;
-            screen_buf[((y*WIDTH)+x)] <<= 14;
-            screen_buf[((y*WIDTH)+x)] |= pty_c;
-            
-            x_prev = x;
-            y_prev = y;
-
-            x++;
-            if(x >= WIDTH){
-              x = 0;
-              y++;
-            }
-          } else {
-            esc_ind++;
-          }
-          break;
-      }
-
-      term_draw();
+      term_write(pty_buf, pty_len);
     }
 
     if(FD_ISSET(ConnectionNumber(dpy), &set)){
@@ -584,8 +609,8 @@ void term_loop(){
             term_key(evt.xkey);
             break;
           case ConfigureNotify:
-            WIDTH = (evt.xconfigure.width / CHAR_W);
-            HEIGHT = (evt.xconfigure.height / CHAR_H) - 1; /* TODO: More robust solution using TOPMOST and CHAR_H */
+            term_width = (evt.xconfigure.width / CHAR_W);
+            term_height = (evt.xconfigure.height / CHAR_H) - 1; /* TODO: More robust solution using TOPMOST and CHAR_H */
             term_resize();
             break;
         }

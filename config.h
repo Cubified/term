@@ -7,6 +7,8 @@
 
 #define SHELL "/bin/bash"
 
+#define FONT_STRING "-*-*-*-*-*-*-*-*-*-*-*-*-*-*"
+
 #define CHAR_W   6
 #define CHAR_H   12
 #define TOPMOST  10
