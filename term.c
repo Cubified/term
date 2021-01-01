@@ -4,6 +4,9 @@
  * Specific TODO list:
  *  - Fix cursor rendering
  *  - Add scrollback
+ *  - Investigate odd escape sequence
+ *      breakage when compiling with
+ *      optimizations
  */
 
 #include <stdio.h>
@@ -11,6 +14,7 @@
 #include <stdint.h>
 #include <pty.h>
 #include <locale.h>
+#include <wchar.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -201,10 +205,12 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
   if(y < 0) { y = 0; }
   if(y > term_height) { y = term_height; }
 
+  /*
   printf("Escape sequence:\n String: %s\n Function: %i\n", str, func);
   for(i=0;i<num;i++){
     printf(" Args[%i]: %i\n", i, args[i]);
   }
+  */
 }
 
 //////////////////////////////
@@ -463,40 +469,6 @@ void term_key(XKeyEvent key){
     }
 }
 
-/* Begin black box utf8 decoder from st */
-wchar_t term_decode_byte(char c, int *charsize){
-  for(*charsize=0;*charsize<(int)LENGTH(utf_mask);(*charsize)++){
-    if((c & utf_mask[*charsize]) == utf_byte[*charsize]){
-      return (c & ~utf_mask[*charsize]);
-    }
-  }
-
-  return 0;
-}
-
-wchar_t term_decode(char *c, int len, int *charsize){
-  int i, j, type;
-  wchar_t out = term_decode_byte(c[0], charsize);
-
-  if(*charsize >= 1 && *charsize <= UTF_SIZE) { return out; }
-
-  for(i=1, j=1; i < len && j < *charsize; i++, j++){
-    out = (out << 6) | term_decode_byte(c[i], &type);
-    if(type != 0){
-      *charsize = j;
-      return out;
-    }
-  }
-
-  if(j < *charsize){
-    *charsize = 0;
-    return 0;
-  }
-
-  return out;
-}
-/* End black box utf8 decoder from st */
-
 void term_putchar(wchar_t wc){
   switch(wc){
     case '\a':
@@ -566,15 +538,17 @@ void term_putchar(wchar_t wc){
 }
 
 void term_write(char *buf, int len){
-  int n,
-      inc = 1;
-  wchar_t wc;
+  size_t n;
+  wchar_t wc[ESC_MAX];
 
-  for(n=0;n<len;n+=inc){
-    wc = term_decode(buf+n, len-n, &inc);
+  memset(wc, 0, ESC_MAX*sizeof(wchar_t));
+  mbstowcs(wc, buf, len);
 
-    term_putchar(wc);
+  for(n=0;n<wcslen(wc);n++){
+    term_putchar(wc[n]);
   }
+
+  return;
 }
 
 void term_loop(){
@@ -594,9 +568,11 @@ void term_loop(){
     select(maxfd+1, &set, NULL, NULL, NULL);
 
     if(FD_ISSET(pty_m, &set)){
-      if((pty_len=read(pty_m, pty_buf, ESC_MAX)) <= 0){ return; }
+      if((pty_len=read(pty_m, pty_buf, ESC_MAX)) <= 0) { return; }
 
       term_write(pty_buf, pty_len);
+
+      memset(pty_buf, 0, pty_len);
     }
 
     if(FD_ISSET(ConnectionNumber(dpy), &set)){

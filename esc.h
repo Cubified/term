@@ -122,7 +122,6 @@ int esc_parse(char *str){
        arg_cur[ESC_MAX],
        *arg_err;
 
-  /* Not strictly necessary, but safe */
   memset(arg_cur, 0, sizeof(arg_cur));
 
   while(++str_ind < str_len-1){

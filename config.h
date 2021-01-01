@@ -7,7 +7,7 @@
 
 #define SHELL "/bin/bash"
 
-#define FONT_STRING "-*-*-*-*-*-*-*-*-*-*-*-*-*-*"
+#define FONT_STRING "-*-*-*-*-*-*-12-*-*-*-*-*-iso10646-*"
 
 #define CHAR_W   6
 #define CHAR_H   12
@@ -16,11 +16,11 @@
 
 #define TABWIDTH 4
 
-#define FG_DEFAULT esc_palette_8[7]
-#define BG_DEFAULT esc_palette_8[0]
+#define FG_DEFAULT 0xa6a28c
+#define BG_DEFAULT 0x20201d
 
 /* Base16 Atelier Dune Theme */
-const int esc_palette_8[] = {
+static int esc_palette_8[] = {
   0x20201d, /* Black   */
   0xd73737, /* Red     */
   0x60ac39, /* Green   */
@@ -31,7 +31,7 @@ const int esc_palette_8[] = {
   0xa6a28c  /* White   */
 };
 
-const int esc_palette_8_bright[] = {
+static int esc_palette_8_bright[] = {
   0x7d7a68, /* Black   */
   0xd73737, /* Red     */
   0x60ac39, /* Green   */
@@ -54,7 +54,7 @@ const int esc_palette_8_bright[] = {
  * });
  * console.log(out);
  */
-const int esc_palette_256[] = {
+static int esc_palette_256[] = {
   0x000000, 0x800000, 0x008000, 0x808000,
   0x000080, 0x800080, 0x008080, 0xc0c0c0,
   0x808080, 0xff0000, 0x00ff00, 0xffff00,
