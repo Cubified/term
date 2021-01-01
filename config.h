@@ -12,6 +12,8 @@
 #define TOPMOST  10
 #define LEFTMOST 2
 
+#define TABWIDTH 4
+
 #define FG_DEFAULT esc_palette_8[7]
 #define BG_DEFAULT esc_palette_8[0]
 

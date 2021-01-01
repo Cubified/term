@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <pty.h>
+#include <locale.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -25,6 +26,7 @@
 //
 Display *dpy;
 Window win;
+XFontSet fnt;
 int run = 1,
     pty_m,
     pty_s,
@@ -144,7 +146,9 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
     case ESC_FUNC_GRAPHICS_MODE_RESET:
       if(args[0] == ESC_QUESTION){
         if(args[1] == 25){
-          /* Show/hide cursor here */
+          /* TODO: Show/hide cursor here */
+        } else if(args[1] == 2004){
+          /* TODO: Bracketed paste here? Bash 5.1 spams this whereas 5.0 did not */
         }
       }
       break;
@@ -187,7 +191,9 @@ enum term_status_codes {
   TERM_ERR_PTY
     = 2,
   TERM_ERR_TTY
-    = 3
+    = 3,
+  X_FONT_SET
+    = 4
 };
 
 //////////////////////////////
@@ -225,6 +231,9 @@ void log_error(int status){
     case TERM_ERR_TTY:
       fprintf(stderr, "Error: Failed to attach shell to TTY.\n");
       break;
+    case X_FONT_SET:
+      fprintf(stderr, "Error: Failed to create X font set.\n");
+      break;
   }
   exit(status);
 }
@@ -235,11 +244,17 @@ void log_error(int status){
 void term_init(){
   XSetWindowAttributes attrs;
   struct winsize ws;
+  char **missing_list,
+       *def_string;
+  int missing_count;
 
   log_info(TERM_LOG_STARTUP);
 
   /* Screen buffer */
   screen_buf = calloc(WIDTH*HEIGHT, sizeof(uint64_t));
+
+  /* Locale */
+  setlocale(LC_ALL, "");
 
   /* X */
   dpy = XOpenDisplay(NULL);
@@ -269,6 +284,18 @@ void term_init(){
   );
   XMapWindow(dpy, win);
   XFlush(dpy);
+
+  fnt = XCreateFontSet(
+    dpy,
+    "-*-*-*-*-*-*-*-*-*-*-*-*-*-*",
+    &missing_list,
+    &missing_count,
+    &def_string
+  );
+  if(fnt == NULL){
+    log_error(X_FONT_SET);
+  }
+  XFreeStringList(missing_list);
 
   /* pty */
   if(openpty(&pty_m, &pty_s, NULL, NULL, NULL)
@@ -300,11 +327,11 @@ void term_init(){
 
 void term_draw(){
   uint64_t cell;
-  char c;
+  wchar_t c;
 
   /* Print last character read from pty */
   cell = screen_buf[(y_prev*WIDTH)+x_prev];
-  c = cell & 0xff; /* TODO: wchar/unicode support */
+  c = cell & 0x3fff; /* TODO: wchar/unicode support */
 
   XClearArea(
     dpy,
@@ -332,9 +359,10 @@ void term_draw(){
       DefaultGC(dpy, DefaultScreen(dpy)),
       (cell >> 14) & 0xffffff
     );
-    XDrawString(
+    XwcDrawString(
       dpy,
       win,
+      fnt,
       DefaultGC(dpy, DefaultScreen(dpy)),
       (x_prev*CHAR_W)+LEFTMOST, (y_prev*CHAR_H)+TOPMOST,
       &c,
@@ -501,6 +529,9 @@ void term_loop(){
         case '\n':
           y++;
           break;
+        case '\t':
+          x += TABWIDTH - (x % TABWIDTH);
+          break;
         default:
           if(esc_ind >= 0){
             esc_seq[esc_ind++] = pty_c;
@@ -547,9 +578,6 @@ void term_loop(){
       while(XPending(dpy)){
         XNextEvent(dpy, &evt);
         switch(evt.type){
-          case Expose:
-            term_draw();
-            break;
           case ButtonPress:
             break;
           case KeyPress:
@@ -571,6 +599,7 @@ void term_shutdown(){
 
   log_info(TERM_LOG_SHUTDOWN);
 
+  XFreeFontSet(dpy, fnt);
   XUnmapWindow(dpy, win);
   XCloseDisplay(dpy);
 }
