@@ -27,8 +27,8 @@
 //////////////////////////////
 // PREPROCESSOR
 //
-#define UTF_SIZE 4
-#define LENGTH(x) (sizeof(x)/sizeof(x[0]))
+#define UTF8_PUSH_BYTE(ind) wc|=buf[n+ind]&0xff;wc<<=8
+#define UTF8_PUSH_BYTE_END(size) wc|=buf[n]&0xff;n+=size
 
 //////////////////////////////
 // ENUMS AND TYPEDEFS
@@ -80,8 +80,6 @@ uint32_t fg = FG_DEFAULT,
 char mod = 0;
 char esc_seq[256];
 uint128_t *screen_buf;
-unsigned char utf_byte[UTF_SIZE + 1] = {0x80,    0, 0xC0, 0xE0, 0xF0};
-unsigned char utf_mask[UTF_SIZE + 1] = {0xC0, 0x80, 0xE0, 0xF0, 0xF8};
 
 //////////////////////////////
 // STATIC DEFINITIONS
@@ -205,12 +203,10 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
   if(y < 0) { y = 0; }
   if(y > term_height) { y = term_height; }
 
-  /*
   printf("Escape sequence:\n String: %s\n Function: %i\n", str, func);
   for(i=0;i<num;i++){
     printf(" Args[%i]: %i\n", i, args[i]);
   }
-  */
 }
 
 //////////////////////////////
@@ -376,14 +372,14 @@ void term_draw(){
       DefaultGC(dpy, DefaultScreen(dpy)),
       (cell >> 32) & 0xffffff
     );
-    XwcDrawString(
+    XmbDrawString(
       dpy,
       win,
       fnt,
       DefaultGC(dpy, DefaultScreen(dpy)),
       (x_prev*CHAR_W)+LEFTMOST, (y_prev*CHAR_H)+TOPMOST,
-      &c,
-      1
+      (char*)&c,
+      (c <= 0xff ? 1 : (c <= 0xffff ? 2 : (c <= 0xffffff ? 3 : 4)))
     );
   }
 
@@ -538,17 +534,29 @@ void term_putchar(wchar_t wc){
 }
 
 void term_write(char *buf, int len){
-  size_t n;
-  wchar_t wc[ESC_MAX];
+  int n = 0;
+  wchar_t wc;
 
-  memset(wc, 0, ESC_MAX*sizeof(wchar_t));
-  mbstowcs(wc, buf, len);
+  for(n=0;n<len;){
+    wc = 0;
+    if((buf[n] & 0xf0) == 0xf0){        /* 4-byte sequence */
+      UTF8_PUSH_BYTE(3);
+      UTF8_PUSH_BYTE(2);
+      UTF8_PUSH_BYTE(1);
+      UTF8_PUSH_BYTE_END(4);
+    } else if((buf[n] & 0xe0) == 0xe0){ /* 3-byte sequence */
+      UTF8_PUSH_BYTE(2);
+      UTF8_PUSH_BYTE(1);
+      UTF8_PUSH_BYTE_END(3);
+    } else if((buf[n] & 0xc0) == 0xc0){ /* 2-byte sequence */
+      UTF8_PUSH_BYTE(1);
+      UTF8_PUSH_BYTE_END(2);
+    } else {                            /* 1-byte sequence */
+      UTF8_PUSH_BYTE_END(1);
+    }
 
-  for(n=0;n<wcslen(wc);n++){
-    term_putchar(wc[n]);
+    term_putchar(wc);
   }
-
-  return;
 }
 
 void term_loop(){

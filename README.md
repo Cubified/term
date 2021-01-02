@@ -1,6 +1,6 @@
 ## term
 
-A tiny terminal emulator.  Currently a work in progress, but semi-functional.
+A tiny terminal emulator.  Currently a work in progress, but reasonably functional.
 
 ### Current Features
 - Implements a common subset of a VT-100 terminal's escape sequences (including truecolor graphics)
