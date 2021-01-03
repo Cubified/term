@@ -88,8 +88,15 @@ uint128_t *screen_buf;
 //
 static void term_esc(char func, int args[256], int num, char *str);
 static void term_draw();
+static void term_draw_cursor();
 static void term_redraw_line();
 static void term_redraw();
+static void term_write(char *buf, int len);
+static void term_putchar(wchar_t wc);
+static void term_key(XKeyEvent key);
+static void term_resize();
+static void term_loop();
+static void term_shutdown();
 
 //////////////////////////////
 // ESCAPE CODE PARSING
