@@ -4,9 +4,10 @@
  * Specific TODO list:
  *  - Fix cursor rendering
  *  - Add scrollback
- *  - Investigate odd escape sequence
- *      breakage when compiling with
- *      optimizations
+ *  - Fix backspace in bash
+ *      when current line has
+ *      more than one type
+ *      of character
  */
 
 #include <stdio.h>
@@ -143,11 +144,34 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
       x_prev = x;
       x = args[0];
       break;
+    case ESC_FUNC_CURSOR_REPORT:
+    case ESC_FUNC_CURSOR_REPORT_ALT:
+      /* TODO */
+      break;
 
+    /* TODO: Zero out cleared area in screen_buf */
     case ESC_FUNC_ERASE_SCREEN:
-      x_prev = 0;
-      y_prev = 0;
-      XClearWindow(dpy, win);
+      if(num == 0){
+        XClearArea(
+          dpy,
+          win,
+          0, (y*CHAR_H)+TOPMOST,
+          (term_width*CHAR_W), (term_height*CHAR_H),
+          False
+        );
+      } else if(args[0] == 1){
+        XClearArea(
+          dpy,
+          win,
+          0, 0,
+          (term_width*CHAR_W), (y*CHAR_H),
+          False
+        );
+      } else if(args[0] == 2){
+        x_prev = 0;
+        y_prev = 0;
+        XClearWindow(dpy, win);
+      }
       break;
     case ESC_FUNC_ERASE_LINE:
       XClearArea(
@@ -349,17 +373,8 @@ void term_draw(){
   uint128_t cell;
   wchar_t c;
 
-  /* Print last character read from pty */
   cell = screen_buf[(y_prev*term_width)+x_prev];
   c = cell & 0xffffffff;
-
-  XClearArea(
-    dpy,
-    win,
-    (x_prev*CHAR_W)+LEFTMOST, y_prev*CHAR_H,
-    2, CHAR_H,
-    False
-  );
 
   if(c != 0){
     XSetForeground(
@@ -395,7 +410,7 @@ void term_draw(){
 }
 
 /* TODO: This is still broken */
-void term_draw_cursor(){
+void term_draw_cursor(){/*
   XSetForeground(
     dpy,
     DefaultGC(dpy, DefaultScreen(dpy)),
@@ -407,7 +422,7 @@ void term_draw_cursor(){
     DefaultGC(dpy, DefaultScreen(dpy)),
     (x*CHAR_W)+LEFTMOST, y*CHAR_H,
     2, CHAR_H
-  );
+  );*/
 }
 
 void term_redraw_line(){
@@ -449,7 +464,7 @@ void term_resize(){
 
 void term_key(XKeyEvent key){
   char buf[32];
-  int i, num;
+  int num;
   KeySym ksym;
 
   num = XLookupString(&key, buf, sizeof(buf), &ksym, 0);
@@ -467,7 +482,7 @@ void term_key(XKeyEvent key){
       write(pty_m, "\x1b[B", 3);
       break;
     default:
-      for(i = 0; i < num; i++){ write(pty_m, &buf[i], 1); }
+      write(pty_m, buf, num);
       break;
     }
 }

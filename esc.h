@@ -57,6 +57,8 @@ enum esc_functions {
     = 'G',
   ESC_FUNC_CURSOR_REPORT
     = 'R',
+  ESC_FUNC_CURSOR_REPORT_ALT
+    = 'n',
   ESC_FUNC_CURSOR_SAVE
     = 's',
   ESC_FUNC_CURSOR_RESTORE
