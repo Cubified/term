@@ -31,6 +31,9 @@
 #define UTF8_PUSH_BYTE(ind) wc|=buf[n+ind]&0xff;wc<<=8
 #define UTF8_PUSH_BYTE_END(size) wc|=buf[n]&0xff;n+=size
 
+#define TERM_CURRENT_X x
+#define TERM_CURRENT_Y y
+
 //////////////////////////////
 // ENUMS AND TYPEDEFS
 //
@@ -58,6 +61,14 @@ enum term_status_codes {
     = 4
 };
 
+enum term_config_opts {
+  /* Cursor styles */
+  TERM_CURSOR_LINE
+    = 0,
+  TERM_CURSOR_BLOCK
+    = 1
+};
+
 typedef __uint128_t uint128_t;
 
 //////////////////////////////
@@ -71,11 +82,12 @@ int run = 1,
     pty_s,
     x = 0,
     y = 0,
-    x_prev = 0,
-    y_prev = 0,
+    x_next = 0,
+    y_next = 0,
     term_width = 100,
     term_height = 100,
-    esc_ind = -2;
+    esc_ind = -2,
+    cursor_style = TERM_CURSOR_BLOCK;
 uint32_t fg = FG_DEFAULT,
          bg = BG_DEFAULT;
 char mod = 0;
@@ -88,7 +100,7 @@ uint128_t *screen_buf;
 // TODO: More
 //
 static void term_esc(char func, int args[256], int num, char *str);
-static void term_draw();
+static void term_draw(int pos_x, int pos_y);
 static void term_draw_cursor();
 static void term_redraw_line();
 static void term_redraw();
@@ -113,74 +125,84 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
     case ESC_FUNC_CURSOR_POS_ALT:
       y = (num >= 1 ? args[0] : 0);
       x = (num >= 2 ? args[1] : 0);
+      x_next = x;
+      y_next = y;
       break;
     case ESC_FUNC_CURSOR_UP:
-      y_prev = y;
-      y -= (num > 0 ? args[0] : 1);
+      y = y_next;
+      y_next -= (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_DOWN:
-      y_prev = y;
-      y += (num > 0 ? args[0] : 1);
+      y = y_next;
+      y_next += (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_RIGHT:
-      x_prev = x;
-      x += (num > 0 ? args[0] : 1);
+      x = x_next;
+      x_next += (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_LEFT:
-      x_prev = x;
-      x -= (num > 0 ? args[0] : 1);
+      /* Important! term writes this escape
+       *   sequence to the shell when left
+       *   arrow is pressed, but most shells
+       *   turn it into a backspace character
+       *   (meaning the code below is almost
+       *   never executed)
+       */
+      x = x_next;
+      x_next -= (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_LINE_NEXT:
-      y_prev = y;
+      y = y_next;
       x = 0;
-      y += (num > 0 ? args[0] : 1);
+      y_next += (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_LINE_PREV:
-      y_prev = y;
+      y = y_next;
       x = 0;
-      y -= (num > 0 ? args[0] : 1);
+      y_next -= (num > 0 ? args[0] : 1);
       break;
     case ESC_FUNC_CURSOR_COL:
-      x_prev = x;
-      x = args[0];
+      x = x_next;
+      x_next = args[0];
       break;
     case ESC_FUNC_CURSOR_REPORT:
     case ESC_FUNC_CURSOR_REPORT_ALT:
       /* TODO */
       break;
 
-    /* TODO: Zero out cleared area in screen_buf */
     case ESC_FUNC_ERASE_SCREEN:
       if(num == 0){
-        XClearArea(
-          dpy,
-          win,
-          0, (y*CHAR_H)+TOPMOST,
-          (term_width*CHAR_W), (term_height*CHAR_H),
-          False
-        );
-      } else if(args[0] == 1){
-        XClearArea(
-          dpy,
-          win,
-          0, 0,
-          (term_width*CHAR_W), (y*CHAR_H),
-          False
-        );
-      } else if(args[0] == 2){
-        x_prev = 0;
-        y_prev = 0;
-        XClearWindow(dpy, win);
+        args[0] = 0;
       }
+      switch(args[0]){
+        case 0:
+          memset(&screen_buf[(y*term_width)+x], 0, ((term_width*term_height)-((y*term_width)+x))*sizeof(uint128_t));
+          break;
+        case 1:
+          memset(screen_buf, 0, ((y*term_width)+x+1)*sizeof(uint128_t));
+          break;
+        case 2:
+          memset(screen_buf, 0, term_width*term_height*sizeof(uint128_t));
+          break;
+      }
+      term_redraw();
       break;
     case ESC_FUNC_ERASE_LINE:
-      XClearArea(
-        dpy,
-        win,
-        (x*CHAR_W)+LEFTMOST, y*CHAR_H,
-        term_width*CHAR_W, CHAR_H,
-        False
-      );
+      if(num == 0){
+        args[0] = 0;
+      }
+      switch(args[0]){
+        case 0:
+          memset(&screen_buf[(y*term_width)+x], 0, (term_width-x)*sizeof(uint128_t));
+          break;
+        case 1:
+          memset(&screen_buf[y*term_width], 0, x*sizeof(uint128_t));
+          break;
+        case 2:
+          memset(&screen_buf[y*term_width], 0, term_width*sizeof(uint128_t));
+          break;
+      }
+      term_redraw_line(TERM_CURRENT_Y);
       break;
 
     case ESC_FUNC_GRAPHICS:
@@ -234,10 +256,12 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
   if(y < 0) { y = 0; }
   if(y > term_height) { y = term_height; }
 
+  /*
   printf("Escape sequence:\n String: %s\n Function: %i\n", str, func);
   for(i=0;i<num;i++){
     printf(" Args[%i]: %i\n", i, args[i]);
   }
+  */
 }
 
 //////////////////////////////
@@ -369,11 +393,11 @@ void term_init(){
   }
 }
 
-void term_draw(){
+void term_draw(int pos_x, int pos_y){
   uint128_t cell;
   wchar_t c;
 
-  cell = screen_buf[(y_prev*term_width)+x_prev];
+  cell = screen_buf[(pos_y*term_width)+pos_x];
   c = cell & 0xffffffff;
 
   if(c != 0){
@@ -386,7 +410,7 @@ void term_draw(){
       dpy,
       win,
       DefaultGC(dpy, DefaultScreen(dpy)),
-      (x_prev*CHAR_W)+LEFTMOST, y_prev*CHAR_H,
+      (pos_x*CHAR_W)+LEFTMOST, pos_y*CHAR_H,
       CHAR_W, CHAR_H
     );
     XSetForeground(
@@ -399,22 +423,28 @@ void term_draw(){
       win,
       fnt,
       DefaultGC(dpy, DefaultScreen(dpy)),
-      (x_prev*CHAR_W)+LEFTMOST, (y_prev*CHAR_H)+TOPMOST,
+      (pos_x*CHAR_W)+LEFTMOST, (pos_y*CHAR_H)+TOPMOST,
       (char*)&c,
       (c <= 0xff ? 1 : (c <= 0xffff ? 2 : (c <= 0xffffff ? 3 : 4)))
     );
   }
 
   XFlush(dpy);
-  return;
 }
 
 /* TODO: This is still broken */
-void term_draw_cursor(){/*
+void term_draw_cursor(){
+  uint128_t cell;
+  wchar_t c;
+
+  cell = screen_buf[(y_next*term_width)+x_next];
+  c = cell & 0xffffffff;
+  if(c == 0) { c = ' '; }
+  /*
   XSetForeground(
     dpy,
     DefaultGC(dpy, DefaultScreen(dpy)),
-    fg
+    bg
   );
   XFillRectangle(
     dpy,
@@ -422,32 +452,62 @@ void term_draw_cursor(){/*
     DefaultGC(dpy, DefaultScreen(dpy)),
     (x*CHAR_W)+LEFTMOST, y*CHAR_H,
     2, CHAR_H
-  );*/
+  );
+  */
+  XSetForeground(
+    dpy,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    FG_DEFAULT
+  );
+  XFillRectangle(
+    dpy,
+    win,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    (x_next*CHAR_W)+LEFTMOST, y_next*CHAR_H,
+    CHAR_W, CHAR_H
+  );
+  XSetForeground(
+    dpy,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    BG_DEFAULT
+  );
+  XmbDrawString(
+    dpy,
+    win,
+    fnt,
+    DefaultGC(dpy, DefaultScreen(dpy)),
+    (x_next*CHAR_W)+LEFTMOST, (y_next*CHAR_H)+TOPMOST,
+    (char*)&c,
+    (c <= 0xff ? 1 : (c <= 0xffff ? 2 : (c <= 0xffffff ? 3 : 4)))
+  );
+
+  XFlush(dpy);
 }
 
-void term_redraw_line(){
+void term_redraw_line(int line){
   int x_i;
 
+  XClearArea(
+    dpy,
+    win,
+    0, (line*CHAR_H),
+    term_width*CHAR_W, CHAR_H,
+    False
+  );
+
   for(x_i=0;x_i<term_width;x_i++){
-    x_prev = x_i;
-    term_draw();
+    term_draw(x_i, line);
   }
 
-  term_draw_cursor();
+  //term_draw_cursor();
 }
 
 void term_redraw(){
-  int y_i,
-      x_o = x_prev,
-      y_o = y_prev;
+  int y_i;
 
   for(y_i=0;y_i<term_height;y_i++){
-    y_prev = y_i;
-    term_redraw_line();
+    term_redraw_line(y_i);
   }
-
-  x_prev = x_o;
-  y_prev = y_o;
 }
 
 void term_resize(){
@@ -488,30 +548,34 @@ void term_key(XKeyEvent key){
 }
 
 void term_putchar(wchar_t wc){
+  int redraw = 1;
+
   switch(wc){
     case '\a':
       printf("Bell\n");
+      redraw = 0;
       break;
     case '\x1b':
       esc_ind = -1;
+      redraw = 0;
       break;
     case '\b':
-      x--;
-      if(x < 0){
-        x = term_width-1;
-        y--;
+      x_next--;
+      if(x_next < 0){
+        x_next = term_width-1;
+        y_next--;
       }
-      screen_buf[(y*term_width)+x] = 0;
-      term_redraw_line();
+      screen_buf[(y_next*term_width)+x_next] = 0;
+      term_redraw_line(TERM_CURRENT_Y);
       break;
     case '\r':
-      x = 0;
+      x_next = 0;
       break;
     case '\n':
-      y++;
+      y_next++;
       break;
     case '\t':
-      x += TABWIDTH - (x % TABWIDTH);
+      x_next += TABWIDTH - (x_next % TABWIDTH);
       break;
     default:
       if(esc_ind >= 0){
@@ -523,7 +587,11 @@ void term_putchar(wchar_t wc){
           }
           esc_ind = -2;
         }
+        redraw = 0;
       } else if(esc_ind == -2){
+        x = x_next;
+        y = y_next;
+
         /* This could be optimized by compressing it into a one-liner
          *   (which was the case initially), but this would require
          *   changing mod, fg, and bg to uint128_t, using more memory
@@ -537,22 +605,23 @@ void term_putchar(wchar_t wc){
         screen_buf[((y*term_width)+x)] |= fg;
         screen_buf[((y*term_width)+x)] <<= 32;
         screen_buf[((y*term_width)+x)] |= wc;
-        
-        x_prev = x;
-        y_prev = y;
 
-        x++;
-        if(x >= term_width){
-          x = 0;
-          y++;
+        x_next++;
+        if(x_next >= term_width){
+          x_next = 0;
+          y_next++;
         }
       } else {
         esc_ind++;
+        redraw = 0;
       }
       break;
   }
 
-  term_draw();
+  if(redraw){
+    term_draw(TERM_CURRENT_X, TERM_CURRENT_Y);
+    //term_draw_cursor();
+  }
 }
 
 void term_write(char *buf, int len){
