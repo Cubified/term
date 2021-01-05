@@ -4,10 +4,6 @@
  * Specific TODO list:
  *  - Fix cursor rendering
  *  - Add scrollback
- *  - Fix backspace in bash
- *      when current line has
- *      more than one type
- *      of character
  */
 
 #include <stdio.h>
@@ -440,46 +436,51 @@ void term_draw_cursor(){
   cell = screen_buf[(y_next*term_width)+x_next];
   c = cell & 0xffffffff;
   if(c == 0) { c = ' '; }
-  /*
-  XSetForeground(
-    dpy,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    bg
-  );
-  XFillRectangle(
-    dpy,
-    win,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    (x*CHAR_W)+LEFTMOST, y*CHAR_H,
-    2, CHAR_H
-  );
-  */
-  XSetForeground(
-    dpy,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    FG_DEFAULT
-  );
-  XFillRectangle(
-    dpy,
-    win,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    (x_next*CHAR_W)+LEFTMOST, y_next*CHAR_H,
-    CHAR_W, CHAR_H
-  );
-  XSetForeground(
-    dpy,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    BG_DEFAULT
-  );
-  XmbDrawString(
-    dpy,
-    win,
-    fnt,
-    DefaultGC(dpy, DefaultScreen(dpy)),
-    (x_next*CHAR_W)+LEFTMOST, (y_next*CHAR_H)+TOPMOST,
-    (char*)&c,
-    (c <= 0xff ? 1 : (c <= 0xffff ? 2 : (c <= 0xffffff ? 3 : 4)))
-  );
+  
+  switch(cursor_style){
+    case TERM_CURSOR_LINE:
+      XSetForeground(
+        dpy,
+        DefaultGC(dpy, DefaultScreen(dpy)),
+        bg
+      );
+      XFillRectangle(
+        dpy,
+        win,
+        DefaultGC(dpy, DefaultScreen(dpy)),
+        (x*CHAR_W)+LEFTMOST, y*CHAR_H,
+        2, CHAR_H
+      );
+      break;
+    case TERM_CURSOR_BLOCK:
+      XSetForeground(
+        dpy,
+        DefaultGC(dpy, DefaultScreen(dpy)),
+        FG_DEFAULT
+      );
+      XFillRectangle(
+        dpy,
+        win,
+        DefaultGC(dpy, DefaultScreen(dpy)),
+        (x_next*CHAR_W)+LEFTMOST, y_next*CHAR_H,
+        CHAR_W, CHAR_H
+      );
+      XSetForeground(
+        dpy,
+        DefaultGC(dpy, DefaultScreen(dpy)),
+        BG_DEFAULT
+      );
+      XmbDrawString(
+        dpy,
+        win,
+        fnt,
+        DefaultGC(dpy, DefaultScreen(dpy)),
+        (x_next*CHAR_W)+LEFTMOST, (y_next*CHAR_H)+TOPMOST,
+        (char*)&c,
+        (c <= 0xff ? 1 : (c <= 0xffff ? 2 : (c <= 0xffffff ? 3 : 4)))
+      );
+    break;
+  }
 
   XFlush(dpy);
 }
