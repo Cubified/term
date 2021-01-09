@@ -19,6 +19,10 @@
 #define FG_DEFAULT 0xa6a28c
 #define BG_DEFAULT 0x20201d
 
+#define SCROLLBACK_SIZE 2
+
+#define CURSOR_STYLE TERM_CURSOR_LINE
+
 /* Base16 Atelier Dune Theme */
 static int esc_palette_8[] = {
   0x20201d, /* Black   */

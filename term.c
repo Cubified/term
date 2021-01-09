@@ -2,8 +2,22 @@
  * term.c: a tiny terminal emulator
  *
  * Specific TODO list:
- *  - Fix cursor rendering
- *  - Add scrollback
+ *  - Fix TODOs littered throughout
+ *  - Add functioning scrollback
+ *  - Fix backspace in bash
+ *      when current line has
+ *      more than one type
+ *      of character
+ *  - Fix left arrow key causing
+ *      character deletion in
+ *      bash
+ *  - Fix miscellaneous errors
+ *      causing various programs
+ *      to break (vim, tmux, fish,
+ *      etc.)
+ *  - Use alternative rendering
+ *      pipeline which reduces
+ *      latency/redraw times
  */
 
 #include <stdio.h>
@@ -59,10 +73,12 @@ enum term_status_codes {
 
 enum term_config_opts {
   /* Cursor styles */
+  TERM_CURSOR_NONE
+    = 1,
   TERM_CURSOR_LINE
-    = 0,
+    = 2,
   TERM_CURSOR_BLOCK
-    = 1
+    = 4
 };
 
 typedef __uint128_t uint128_t;
@@ -80,10 +96,13 @@ int run = 1,
     y = 0,
     x_next = 0,
     y_next = 0,
+    x_cur_prev = 0,
+    y_cur_prev = 0,
     term_width = 100,
     term_height = 100,
     esc_ind = -2,
-    cursor_style = TERM_CURSOR_BLOCK;
+    cursor_style = CURSOR_STYLE,
+    viewport = 0;
 uint32_t fg = FG_DEFAULT,
          bg = BG_DEFAULT;
 char mod = 0;
@@ -135,6 +154,7 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
     case ESC_FUNC_CURSOR_RIGHT:
       x = x_next;
       x_next += (num > 0 ? args[0] : 1);
+      term_draw_cursor();
       break;
     case ESC_FUNC_CURSOR_LEFT:
       /* Important! term writes this escape
@@ -235,7 +255,11 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
     case ESC_FUNC_GRAPHICS_MODE_RESET:
       if(args[0] == ESC_QUESTION){
         if(args[1] == 25){
-          /* TODO: Show/hide cursor here */
+          cursor_style = 
+            (func == ESC_FUNC_GRAPHICS_MODE ?
+              (cursor_style & ~TERM_CURSOR_NONE) :
+              (cursor_style | TERM_CURSOR_NONE)
+            );
         } else if(args[1] == 2004){
           /* TODO: Bracketed paste here? Bash 5.1 spams this whereas 5.0 did not */
         }
@@ -247,18 +271,16 @@ void term_esc(char func, int args[ESC_MAX], int num, char *str){
       break;
   }
 
-  if(x < 0) { x = 0; }
-  if(x > term_width) { x = term_width; }
-  if(y < 0) { y = 0; }
-  if(y > term_height) { y = term_height; }
+  if(x_next < 0) { x_next = 0; }
+  if(x_next > term_width) { x_next = term_width; }
+  if(y_next < 0) { y_next = 0; }
+  if(y_next > term_height) { y_next = term_height; }
 
-  /*
   printf("Escape sequence:\n String: %s\n Function: %i\n", str, func);
   for(i=0;i<num;i++){
     printf(" Args[%i]: %i\n", i, args[i]);
   }
-  */
-}
+  }
 
 //////////////////////////////
 // LOG FUNCTIONS
@@ -315,7 +337,7 @@ void term_init(){
   log_info(TERM_LOG_STARTUP);
 
   /* Screen buffer */
-  screen_buf = calloc(term_width*term_height, sizeof(uint128_t));
+  screen_buf = calloc(term_width*term_height*SCROLLBACK_SIZE, sizeof(uint128_t));
 
   /* Locale */
   setlocale(LC_ALL, "");
@@ -406,7 +428,7 @@ void term_draw(int pos_x, int pos_y){
       dpy,
       win,
       DefaultGC(dpy, DefaultScreen(dpy)),
-      (pos_x*CHAR_W)+LEFTMOST, pos_y*CHAR_H,
+      (pos_x*CHAR_W)+LEFTMOST, (pos_y-viewport)*CHAR_H,
       CHAR_W, CHAR_H
     );
     XSetForeground(
@@ -419,7 +441,7 @@ void term_draw(int pos_x, int pos_y){
       win,
       fnt,
       DefaultGC(dpy, DefaultScreen(dpy)),
-      (pos_x*CHAR_W)+LEFTMOST, (pos_y*CHAR_H)+TOPMOST,
+      (pos_x*CHAR_W)+LEFTMOST, ((pos_y-viewport)*CHAR_H)+TOPMOST,
       (char*)&c,
       (c <= 0xff ? 1 : (c <= 0xffff ? 2 : (c <= 0xffffff ? 3 : 4)))
     );
@@ -428,61 +450,48 @@ void term_draw(int pos_x, int pos_y){
   XFlush(dpy);
 }
 
-/* TODO: This is still broken */
 void term_draw_cursor(){
-  uint128_t cell;
-  wchar_t c;
+  if(cursor_style & TERM_CURSOR_NONE == 1){ return; }
+ 
+  if(x_next > 0){ /* TODO: Hack for lingering cursor when printing empty line */
+    term_draw(x_cur_prev, y_cur_prev);
 
-  cell = screen_buf[(y_next*term_width)+x_next];
-  c = cell & 0xffffffff;
-  if(c == 0) { c = ' '; }
-  
-  switch(cursor_style){
-    case TERM_CURSOR_LINE:
-      XSetForeground(
-        dpy,
-        DefaultGC(dpy, DefaultScreen(dpy)),
-        bg
-      );
-      XFillRectangle(
-        dpy,
-        win,
-        DefaultGC(dpy, DefaultScreen(dpy)),
-        (x*CHAR_W)+LEFTMOST, y*CHAR_H,
-        2, CHAR_H
-      );
-      break;
-    case TERM_CURSOR_BLOCK:
-      XSetForeground(
-        dpy,
-        DefaultGC(dpy, DefaultScreen(dpy)),
-        FG_DEFAULT
-      );
-      XFillRectangle(
-        dpy,
-        win,
-        DefaultGC(dpy, DefaultScreen(dpy)),
-        (x_next*CHAR_W)+LEFTMOST, y_next*CHAR_H,
-        CHAR_W, CHAR_H
-      );
-      XSetForeground(
-        dpy,
-        DefaultGC(dpy, DefaultScreen(dpy)),
-        BG_DEFAULT
-      );
-      XmbDrawString(
-        dpy,
-        win,
-        fnt,
-        DefaultGC(dpy, DefaultScreen(dpy)),
-        (x_next*CHAR_W)+LEFTMOST, (y_next*CHAR_H)+TOPMOST,
-        (char*)&c,
-        (c <= 0xff ? 1 : (c <= 0xffff ? 2 : (c <= 0xffffff ? 3 : 4)))
-      );
-    break;
+    switch(cursor_style & ~TERM_CURSOR_NONE){
+      case TERM_CURSOR_BLOCK:
+        XSetForeground(
+          dpy,
+          DefaultGC(dpy, DefaultScreen(dpy)),
+          fg
+        );
+        XFillRectangle(
+          dpy,
+          win,
+          DefaultGC(dpy, DefaultScreen(dpy)),
+          (x_next*CHAR_W)+LEFTMOST, y_next*CHAR_H,
+          CHAR_W, CHAR_H
+        );
+        break;
+      case TERM_CURSOR_LINE:
+        XSetForeground(
+          dpy,
+          DefaultGC(dpy, DefaultScreen(dpy)),
+          fg
+        );
+        XFillRectangle(
+          dpy,
+          win,
+          DefaultGC(dpy, DefaultScreen(dpy)),
+          (x_next*CHAR_W)+LEFTMOST, y_next*CHAR_H,
+          2, CHAR_H
+        );
+        break;
+    }
+
+    x_cur_prev = x_next;
+    y_cur_prev = y_next;
+
+    XFlush(dpy);
   }
-
-  XFlush(dpy);
 }
 
 void term_redraw_line(int line){
@@ -491,7 +500,7 @@ void term_redraw_line(int line){
   XClearArea(
     dpy,
     win,
-    0, (line*CHAR_H),
+    0, ((line-viewport)*CHAR_H),
     term_width*CHAR_W, CHAR_H,
     False
   );
@@ -500,13 +509,18 @@ void term_redraw_line(int line){
     term_draw(x_i, line);
   }
 
-  //term_draw_cursor();
+  term_draw_cursor();
 }
 
 void term_redraw(){
   int y_i;
 
-  for(y_i=0;y_i<term_height;y_i++){
+  XClearWindow(
+    dpy,
+    win
+  );
+
+  for(y_i=viewport;y_i<term_height+viewport;y_i++){
     term_redraw_line(y_i);
   }
 }
@@ -514,7 +528,7 @@ void term_redraw(){
 void term_resize(){
   struct winsize ws;
 
-  screen_buf = realloc(screen_buf, term_width*term_height*sizeof(uint128_t));
+  screen_buf = realloc(screen_buf, term_width*term_height*SCROLLBACK_SIZE*sizeof(uint128_t));
 
   ws.ws_col = term_width;
   ws.ws_row = term_height;
@@ -571,9 +585,17 @@ void term_putchar(wchar_t wc){
       break;
     case '\r':
       x_next = 0;
+      redraw = 0;
       break;
     case '\n':
       y_next++;
+/*      if(y_next > term_height){
+        viewport++;
+        term_redraw();
+      } else {
+*/        term_redraw_line(TERM_CURRENT_Y);
+//      }
+      redraw = 0;
       break;
     case '\t':
       x_next += TABWIDTH - (x_next % TABWIDTH);
@@ -621,7 +643,7 @@ void term_putchar(wchar_t wc){
 
   if(redraw){
     term_draw(TERM_CURRENT_X, TERM_CURRENT_Y);
-    //term_draw_cursor();
+    term_draw_cursor();
   }
 }
 
